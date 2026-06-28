@@ -1,11 +1,20 @@
-// In-memory state store for Extension-Driven Mode
-if (!global.scraperJob) {
-  global.scraperJob = createEmptyJob();
+// Scraper state store — backed by MongoDB so state persists across Vercel serverless calls.
+// All functions are async (read/write to DB).
+
+import clientPromise from "@/lib/mongodb";
+
+const DB_NAME = "upwork_scraper";
+const COLLECTION = "job";
+const JOB_ID = "singleton"; // We only ever have one active job document
+
+async function getCollection() {
+  const client = await clientPromise;
+  return client.db(DB_NAME).collection(COLLECTION);
 }
-let job = global.scraperJob;
 
 function createEmptyJob() {
   return {
+    _id: JOB_ID,
     id: null,
     keyword: "",
     tabId: null,
@@ -31,62 +40,86 @@ function createEmptyJob() {
   };
 }
 
-function resetJob() {
-  for (const key in job) {
-    delete job[key];
-  }
-  Object.assign(job, createEmptyJob());
-}
-
-function startScrape({ keyword, maxPages }) {
-  resetJob();
-  job.id = Date.now().toString(36);
-  job.keyword = String(keyword || "").trim();
-  job.maxPages = Number(maxPages || 1);
-  job.running = true;
-  job.startedAt = new Date().toISOString();
-  job.phase = "starting";
-  job.message = "Opening Upwork tab... Please keep the tab open.";
-  job.downloadUrl = `/api/download`;
-  return publicJob();
-}
-
-function stopScrape() {
-  job.shouldStop = true;
-  job.running = false;
-  if (job.phase !== "done" && job.phase !== "error") job.phase = "stopped";
-  job.message = "Stopped by user.";
-  job.statusType = "warning";
-  return publicJob();
-}
-
-function clearJob() {
-  resetJob();
-  return publicJob();
-}
-
-function focusVerificationTab() {
-  // No-op in extension-driven mode
-  return publicJob();
-}
-
-function publicJob() {
+function publicJob(job) {
+  if (!job) job = createEmptyJob();
+  const { _id, ...rest } = job;
   return {
-    ...job,
-    data: job.data ? job.data.slice(-200) : [],
+    ...rest,
+    data: Array.isArray(rest.data) ? rest.data.slice(-200) : [],
   };
 }
 
-function updateJob(updates) {
-  Object.assign(job, updates);
-  return publicJob();
+async function getJob() {
+  const col = await getCollection();
+  const job = await col.findOne({ _id: JOB_ID });
+  return job || createEmptyJob();
 }
 
-module.exports = {
+export async function getStatus() {
+  const job = await getJob();
+  return publicJob(job);
+}
+
+export async function startScrape({ keyword, maxPages }) {
+  const col = await getCollection();
+  const fresh = {
+    ...createEmptyJob(),
+    id: Date.now().toString(36),
+    keyword: String(keyword || "").trim(),
+    maxPages: Number(maxPages || 1),
+    running: true,
+    startedAt: new Date().toISOString(),
+    phase: "starting",
+    message: "Opening Upwork tab... Please keep the tab open.",
+    downloadUrl: "/api/download",
+  };
+  await col.replaceOne({ _id: JOB_ID }, fresh, { upsert: true });
+  return publicJob(fresh);
+}
+
+export async function stopScrape() {
+  const col = await getCollection();
+  const job = await getJob();
+  const updated = {
+    ...job,
+    shouldStop: true,
+    running: false,
+    phase: job.phase !== "done" && job.phase !== "error" ? "stopped" : job.phase,
+    message: "Stopped by user.",
+    statusType: "warning",
+  };
+  await col.replaceOne({ _id: JOB_ID }, updated, { upsert: true });
+  return publicJob(updated);
+}
+
+export async function clearJob() {
+  const col = await getCollection();
+  const fresh = createEmptyJob();
+  await col.replaceOne({ _id: JOB_ID }, fresh, { upsert: true });
+  return publicJob(fresh);
+}
+
+export async function focusVerificationTab() {
+  // No-op in extension-driven mode
+  return getStatus();
+}
+
+export async function updateJob(updates) {
+  const col = await getCollection();
+  const job = await getJob();
+  const updated = { ...job, ...updates };
+  await col.replaceOne({ _id: JOB_ID }, updated, { upsert: true });
+  return publicJob(updated);
+}
+
+// Default export for backward compat with API routes that do: import scraper from "@/scraper/scraper"
+const scraper = {
+  getStatus,
   startScrape,
   stopScrape,
   clearJob,
   focusVerificationTab,
-  getStatus: publicJob,
   updateJob,
 };
+
+export default scraper;

@@ -80,7 +80,7 @@ export async function POST(request) {
       body.downloadUrl = `/api/download`;
     }
 
-    const job = scraper.updateJob(body);
+    const job = await scraper.updateJob(body);
     return NextResponse.json({ ok: true, job }, { headers: CORS_HEADERS });
   } catch (error) {
     return NextResponse.json(

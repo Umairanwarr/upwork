@@ -1,7 +1,8 @@
-import { NextResponse } from "next/server";
+import scraper from "@/scraper/scraper";
 
 export async function GET() {
-  const job = global.scraperJob;
+  const job = await scraper.getStatus();
+
   if (!job || !job.data || job.data.length === 0) {
     return new Response("No CSV data available yet.", {
       status: 404,

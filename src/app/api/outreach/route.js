@@ -1,31 +1,21 @@
 import { NextResponse } from "next/server";
-import fs from "fs/promises";
-import path from "path";
+import clientPromise from "@/lib/mongodb";
 
-const SAVE_PATH = path.join(process.cwd(), "exports", "outreach_leads.json");
+const DB_NAME = "upwork_scraper";
+const COLLECTION = "outreach_leads";
 
-async function loadLeads() {
-  try {
-    const data = await fs.readFile(SAVE_PATH, "utf8");
-    return JSON.parse(data);
-  } catch (_) {
-    return [];
-  }
-}
-
-async function saveLeads(leads) {
-  try {
-    await fs.mkdir(path.dirname(SAVE_PATH), { recursive: true });
-    await fs.writeFile(SAVE_PATH, JSON.stringify(leads, null, 2), "utf8");
-  } catch (err) {
-    console.error("Failed to save outreach leads:", err);
-  }
+async function getCollection() {
+  const client = await clientPromise;
+  return client.db(DB_NAME).collection(COLLECTION);
 }
 
 export async function GET() {
   try {
-    const leads = await loadLeads();
-    return NextResponse.json({ ok: true, leads });
+    const col = await getCollection();
+    const leads = await col.find({}).toArray();
+    // Remove MongoDB _id from each lead before returning
+    const cleaned = leads.map(({ _id, ...rest }) => rest);
+    return NextResponse.json({ ok: true, leads: cleaned });
   } catch (error) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   }
@@ -33,7 +23,8 @@ export async function GET() {
 
 export async function DELETE() {
   try {
-    await saveLeads([]);
+    const col = await getCollection();
+    await col.deleteMany({});
     return NextResponse.json({ ok: true, leads: [] });
   } catch (error) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });

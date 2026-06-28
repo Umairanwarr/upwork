@@ -4,7 +4,7 @@ import scraper from "@/scraper/scraper";
 export async function POST(request) {
   try {
     const body = await request.json();
-    const job = scraper.startScrape({
+    const job = await scraper.startScrape({
       keyword: body.keyword,
       maxPages: body.maxPages,
     });

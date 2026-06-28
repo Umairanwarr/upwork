@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import fs from "fs/promises";
-import path from "path";
+import clientPromise from "@/lib/mongodb";
 
-const SAVE_PATH = path.join(process.cwd(), "exports", "outreach_leads.json");
+const DB_NAME = "upwork_scraper";
+const COLLECTION = "outreach_leads";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -10,22 +10,9 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
-async function loadLeads() {
-  try {
-    const data = await fs.readFile(SAVE_PATH, "utf8");
-    return JSON.parse(data);
-  } catch (_) {
-    return [];
-  }
-}
-
-async function saveLeads(leads) {
-  try {
-    await fs.mkdir(path.dirname(SAVE_PATH), { recursive: true });
-    await fs.writeFile(SAVE_PATH, JSON.stringify(leads, null, 2), "utf8");
-  } catch (err) {
-    console.error("Failed to save outreach leads:", err);
-  }
+async function getCollection() {
+  const client = await clientPromise;
+  return client.db(DB_NAME).collection(COLLECTION);
 }
 
 export async function OPTIONS() {
@@ -47,24 +34,25 @@ export async function POST(request) {
       );
     }
 
-    const currentLeads = await loadLeads();
-    const existingMap = new Map(currentLeads.map((l) => [l.profileUrl, l]));
+    const col = await getCollection();
 
-    newLeads.forEach((l) => {
-      if (!l.profileUrl) return; // Skip if no profile url
-      const existing = existingMap.get(l.profileUrl);
-      if (existing) {
-        // Merge fields, overriding with new ones if present
-        existingMap.set(l.profileUrl, { ...existing, ...l, socials: { ...existing.socials, ...l.socials } });
-      } else {
-        existingMap.set(l.profileUrl, l);
-      }
-    });
+    // Upsert each lead by profileUrl
+    const ops = newLeads
+      .filter((l) => l.profileUrl)
+      .map((l) => ({
+        updateOne: {
+          filter: { profileUrl: l.profileUrl },
+          update: { $set: l },
+          upsert: true,
+        },
+      }));
 
-    const mergedLeads = Array.from(existingMap.values());
-    await saveLeads(mergedLeads);
+    if (ops.length > 0) {
+      await col.bulkWrite(ops);
+    }
 
-    return NextResponse.json({ ok: true, count: mergedLeads.length }, { headers: CORS_HEADERS });
+    const total = await col.countDocuments();
+    return NextResponse.json({ ok: true, count: total }, { headers: CORS_HEADERS });
   } catch (error) {
     return NextResponse.json(
       { ok: false, error: error.message },
