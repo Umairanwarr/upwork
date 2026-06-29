@@ -39,13 +39,20 @@ export async function POST(request) {
     // Upsert each lead by profileUrl
     const ops = newLeads
       .filter((l) => l.profileUrl)
-      .map((l) => ({
-        updateOne: {
-          filter: { profileUrl: l.profileUrl },
-          update: { $set: l },
-          upsert: true,
-        },
-      }));
+      .map((l) => {
+        const leadCopy = { ...l };
+        delete leadCopy.createdAt; // Let MongoDB handle it only on insert
+        return {
+          updateOne: {
+            filter: { profileUrl: l.profileUrl },
+            update: {
+              $set: leadCopy,
+              $setOnInsert: { createdAt: new Date() }
+            },
+            upsert: true,
+          }
+        };
+      });
 
     if (ops.length > 0) {
       await col.bulkWrite(ops);
